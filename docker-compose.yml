@@ -1,0 +1,102 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: livekit-redis
+    init: true
+    command: redis-server --appendonly yes
+    volumes:
+      - livekit_redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  livekit-server:
+    image: livekit/livekit-server:latest
+    container_name: livekit-server
+    init: true
+    command: [ "--config", "/config/livekit.yaml", "--bind", "0.0.0.0", "--node-ip", "127.0.0.1" ]
+    volumes:
+      - ./livekit.yaml:/config/livekit.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "7880:7880"
+      - "7881:7881/tcp"
+      - "7882:7882/udp"
+    restart: unless-stopped
+
+  agent:
+    build: .
+    container_name: livekit-agent
+    init: true
+    command: python agent_server.py start
+    ports:
+      - "8081:8081"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      LIVEKIT_URL: http://livekit-server:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+    depends_on:
+      - livekit-server
+      - db
+    restart: unless-stopped
+
+  token-server:
+    build: .
+    container_name: livekit-token-server
+    init: true
+    command: python token_server.py
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      LIVEKIT_URL: http://livekit-server:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+    depends_on:
+      - livekit-server
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    init: true
+    ports:
+      - "8501:80"
+    depends_on:
+      - token-server
+    env_file:
+      - .env
+  db:
+    image: postgres:15-alpine
+    container_name: livekit-postgres
+    init: true
+    environment:
+      POSTGRES_DB: hotel_room_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  livekit_redis_data:
+
+
